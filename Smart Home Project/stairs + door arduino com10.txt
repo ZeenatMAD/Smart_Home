@@ -1,0 +1,183 @@
+#include <LiquidCrystal_I2C.h>
+#include <Servo.h>
+#include <SoftwareSerial.h>
+
+// ----- LCD -----
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// ----- SERVO -----
+Servo doorServo;
+int servoPin = 4;
+
+// ----- BLUETOOTH -----
+SoftwareSerial BT(2, 3);  // RX, TX (HC-05 TX->2, RX->3)
+String inputBuffer = "";
+
+// ----- PASSWORD SYSTEM -----
+String password = "1111";  // default PIN
+
+// ----- IR sensors for stairs (moved to avoid conflict with BT) -----
+int IR_bottom = A0;   // bottom sensor
+int IR_top    = A1;   // top sensor
+
+// ----- LEDs (6 LEDs → 2 per stair) -----
+int led1 = 5;   // Stair 1 LED A
+int led2 = 6;   // Stair 1 LED B
+int led3 = 7;   // Stair 2 LED A
+int led4 = 8;   // Stair 2 LED B
+int led5 = 9;   // Stair 3 LED A
+int led6 = 10;   // Stair 3 LED B
+
+// Flags to prevent flickering/retriggering
+bool goingUp = false;
+bool goingDown = false;
+
+void setup() {
+  // --- Bluetooth ---
+  BT.begin(9600);
+  Serial.begin(9600);
+
+  // --- LCD ---
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Smart Door");
+  lcd.setCursor(0,1);
+  lcd.print("Enter PIN:");
+
+  // --- Servo ---a
+  doorServo.attach(servoPin);
+  doorServo.write(0);  // closed
+
+  // --- Stairs pins ---
+  pinMode(IR_bottom, INPUT);
+  pinMode(IR_top, INPUT);
+  pinMode(led1, OUTPUT);
+  pinMode(led2, OUTPUT);
+  pinMode(led3, OUTPUT);
+  pinMode(led4, OUTPUT);
+  pinMode(led5, OUTPUT);
+  pinMode(led6, OUTPUT);
+
+  allOff(); // start LEDs off
+}
+
+void loop() {
+  // ----- Handle Bluetooth / Smart Door -----
+  while (BT.available()) {
+    char c = BT.read();
+    if (c == '#') {
+      inputBuffer.trim();
+      Serial.print("Received: ");
+      Serial.println(inputBuffer);
+
+      if (inputBuffer.startsWith("OPEN:")) handleOpen(inputBuffer.substring(5));
+      else if (inputBuffer.startsWith("CHANGE:")) handleChangePin(inputBuffer.substring(7));
+      else if (inputBuffer == password) handleOpen(inputBuffer);
+      else if (inputBuffer.length() > 0) {
+        Serial.println("Wrong PIN");
+        lcd.clear();
+        lcd.setCursor(0,0);
+        lcd.print("Wrong PIN");
+        lcd.setCursor(0,1);
+        lcd.print("Try Again");
+        delay(1500);
+      }
+
+      lcd.clear();
+      lcd.setCursor(0,0);
+      lcd.print("Smart Door");
+      lcd.setCursor(0,1);
+      lcd.print("Enter PIN:");
+      inputBuffer = "";
+      delay(100);
+    } else {
+      inputBuffer += c;
+    }
+  }
+
+  // ----- Handle Stairs -----
+  if (digitalRead(IR_bottom) == LOW && !goingUp) {
+    goingUp = true;
+    goingDown = false;
+    goUp();
+    goingUp = false;
+  }
+  else if (digitalRead(IR_top) == LOW && !goingDown) {
+    goingDown = true;
+    goingUp = false;
+    goDown();
+    goingDown = false;
+  }
+  else if (digitalRead(IR_bottom) != LOW && digitalRead(IR_top) != LOW) {
+    allOff();
+  }
+}
+
+// ---------------- FUNCTIONS ----------------
+
+// Door functions
+void handleOpen(String pass) {
+  pass.trim();
+  lcd.clear();
+  if (pass == password) {
+    BT.println("ACCESS_GRANTED");
+    Serial.println("ACCESS_GRANTED");
+    lcd.print("Access Granted");
+    lcd.setCursor(0,1);
+    lcd.print("Opening Door...");
+    doorServo.write(0);
+    delay(3000);
+    doorServo.write(90);
+  } else {
+    BT.println("WRONG_PASSWORD");
+    Serial.println("WRONG_PASSWORD");
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Wrong PIN");
+    lcd.setCursor(0,1);
+    lcd.print("Try Again");
+    delay(1500);
+  }
+}
+
+void handleChangePin(String newPass) {
+  newPass.trim();
+  if (newPass.length() == 0) {
+    BT.println("PIN_MISMATCH");
+    lcd.clear();
+    lcd.print("PIN Mismatch");
+    delay(1500);
+  } else {
+    password = newPass;
+    BT.println("PIN_UPDATED");
+    Serial.println("PIN_UPDATED");
+    lcd.clear();
+    lcd.print("PIN Updated");
+    delay(1500);
+  }
+}
+
+// Stairs functions
+void goUp() {
+  digitalWrite(led1,HIGH); digitalWrite(led2,HIGH); delay(700);
+  digitalWrite(led3,HIGH); digitalWrite(led4,HIGH); delay(700);
+  digitalWrite(led5,HIGH); digitalWrite(led6,HIGH); delay(700);
+  delay(1500);
+  allOff();
+}
+
+void goDown() {
+  digitalWrite(led5,HIGH); digitalWrite(led6,HIGH); delay(700);
+  digitalWrite(led3,HIGH); digitalWrite(led4,HIGH); delay(700);
+  digitalWrite(led1,HIGH); digitalWrite(led2,HIGH); delay(700);
+  delay(1500);
+  allOff();
+}
+
+void allOff() {
+  digitalWrite(led1,LOW); digitalWrite(led2,LOW);
+  digitalWrite(led3,LOW); digitalWrite(led4,LOW);
+  digitalWrite(led5,LOW); digitalWrite(led6,LOW);
+}
